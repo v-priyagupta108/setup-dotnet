@@ -48,6 +48,13 @@ jest.unstable_mockModule('fs', () => {
   };
 });
 
+jest.unstable_mockModule('os', () => {
+  const actual = jest.requireActual('os') as typeof import('os');
+  // os.homedir() reads the real environment, not jest's process.env.
+  const homedir = jest.fn(actual.homedir);
+  return {...actual, homedir, default: {...actual, homedir}};
+});
+
 // Allows tests to re-import the installer as if running on another OS.
 let platformOverride: 'windows' | 'linux' | 'mac' | undefined;
 jest.unstable_mockModule('../src/utils.js', () => ({
@@ -576,9 +583,10 @@ describe('installer tests', () => {
         (freshFs.rmSync as jest.Mock).mockImplementation(() => {});
 
         const freshCore = await import('@actions/core');
+        const freshOs = await import('os');
         const {DotnetInstallDir} = await import('../src/installer.js');
 
-        return {DotnetInstallDir, core: freshCore, fs: freshFs};
+        return {DotnetInstallDir, core: freshCore, fs: freshFs, os: freshOs};
       };
 
       afterEach(() => {
@@ -702,6 +710,50 @@ describe('installer tests', () => {
         expect(probedIn).not.toContain(process.cwd());
       });
 
+      it(`should fall back on Windows when the default location is not writable`, async () => {
+        delete process.env['DOTNET_INSTALL_DIR'];
+        process.env['PROGRAMFILES'] = path.resolve(path.sep, 'Program Files');
+        const homePath = path.join(os.homedir(), '.dotnet');
+        const {DotnetInstallDir, core: freshCore} = await importInstallerFor(
+          'windows',
+          dir => dir === homePath
+        );
+
+        expect(DotnetInstallDir.dirPath).toBe(homePath);
+        expect(freshCore.warning).toHaveBeenCalled();
+      });
+
+      it(`should not probe a relative default location on Windows`, async () => {
+        delete process.env['DOTNET_INSTALL_DIR'];
+        // An unset PROGRAMFILES makes the Windows default relative.
+        delete process.env['PROGRAMFILES'];
+        const homePath = path.join(os.homedir(), '.dotnet');
+        const {DotnetInstallDir, fs: freshFs} = await importInstallerFor(
+          'windows',
+          () => true
+        );
+
+        expect(DotnetInstallDir.dirPath).toBe(homePath);
+        const probedIn = (freshFs.mkdtempSync as jest.Mock).mock.calls.map(
+          call => path.dirname(String(call[0]))
+        );
+        expect(probedIn).not.toContain(process.cwd());
+      });
+
+      it(`should not treat the filesystem root as a home directory`, async () => {
+        delete process.env['DOTNET_INSTALL_DIR'];
+        const root = path.parse(process.cwd()).root;
+        const rootDotnet = path.join(root, '.dotnet');
+        // Only the root candidate is writable, so an unguarded run would pick it.
+        const {DotnetInstallDir, os: freshOs} = await importInstallerFor(
+          'linux',
+          dir => dir === rootDotnet
+        );
+        (freshOs.homedir as jest.Mock).mockReturnValue(root);
+
+        expect(DotnetInstallDir.dirPath).toBe('/usr/share/dotnet');
+      });
+
       it(`should keep the default location and warn when neither is writable`, async () => {
         delete process.env['DOTNET_INSTALL_DIR'];
         const {DotnetInstallDir, core: freshCore} = await importInstallerFor(
@@ -726,11 +778,22 @@ describe('installer tests', () => {
         expect(freshFs.mkdtempSync as jest.Mock).not.toHaveBeenCalled();
       });
 
-      it(`should not touch the filesystem until the directory is needed`, async () => {
+      it(`should resolve once, and not before the directory is needed`, async () => {
         delete process.env['DOTNET_INSTALL_DIR'];
-        const {fs: freshFs} = await importInstallerFor('linux', () => true);
+        const {DotnetInstallDir, fs: freshFs} = await importInstallerFor(
+          'linux',
+          () => true
+        );
+        const probe = freshFs.mkdtempSync as jest.Mock;
 
-        expect(freshFs.mkdtempSync as jest.Mock).not.toHaveBeenCalled();
+        expect(probe).not.toHaveBeenCalled();
+
+        void DotnetInstallDir.dirPath;
+        const afterFirstRead = probe.mock.calls.length;
+        void DotnetInstallDir.dirPath;
+
+        expect(afterFirstRead).toBeGreaterThan(0);
+        expect(probe.mock.calls.length).toBe(afterFirstRead);
       });
     });
   });

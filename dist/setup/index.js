@@ -45216,12 +45216,11 @@ class DotnetVersionResolver {
         let releasesInfo = rawReleasesInfo;
         // Filter out EOL versions
         releasesInfo = releasesInfo.filter(info => info['support-phase'] !== 'eol');
-        // Filter out prerelease versions if quality is not 'preview' or 'daily'
+        // Filter out preview versions if quality is not 'preview' or 'daily'
         // If quality is not specified, we assume strict stability (GA only)
         const normalizedQuality = (this.quality || '').toLowerCase();
         if (!['preview', 'daily'].includes(normalizedQuality)) {
-            // 'go-live' marks a release candidate, which is supported but not GA.
-            releasesInfo = releasesInfo.filter(info => !['preview', 'go-live'].includes(info['support-phase']));
+            releasesInfo = releasesInfo.filter(info => info['support-phase'] !== 'preview');
         }
         // Apply channel filter (LTS/STS)
         if (channelFilter) {
@@ -45353,8 +45352,11 @@ class DotnetInstallDir {
     static homeInstallPath() {
         try {
             const home = external_os_default().homedir();
-            // An empty HOME would make this relative to the current working directory.
-            return external_path_default().isAbsolute(home) ? external_path_default().join(home, '.dotnet') : undefined;
+            // An empty HOME resolves against the cwd; a root HOME gives '/.dotnet'.
+            if (!external_path_default().isAbsolute(home) || home === external_path_default().parse(home).root) {
+                return undefined;
+            }
+            return external_path_default().join(home, '.dotnet');
         }
         catch {
             return undefined;
