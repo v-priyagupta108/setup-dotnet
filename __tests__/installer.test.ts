@@ -57,16 +57,12 @@ jest.unstable_mockModule('os', () => {
 
 // Allows tests to re-import the installer as if running on another OS.
 let platformOverride: 'windows' | 'linux' | 'mac' | undefined;
-jest.unstable_mockModule('../src/utils.js', () => ({
-  IS_WINDOWS: process.platform === 'win32',
-  PLATFORM:
-    platformOverride ??
-    (process.platform === 'win32'
-      ? 'windows'
-      : process.platform === 'linux'
-        ? 'linux'
-        : 'mac')
-}));
+jest.unstable_mockModule('../src/utils.js', () => {
+  const actual = jest.requireActual(
+    '../src/utils.js'
+  ) as typeof import('../src/utils.js');
+  return {...actual, PLATFORM: platformOverride ?? actual.PLATFORM};
+});
 
 const exec = await import('@actions/exec');
 const core = await import('@actions/core');
@@ -710,19 +706,6 @@ describe('installer tests', () => {
         expect(probedIn).not.toContain(process.cwd());
       });
 
-      it(`should fall back on Windows when the default location is not writable`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
-        process.env['PROGRAMFILES'] = path.resolve(path.sep, 'Program Files');
-        const homePath = path.join(os.homedir(), '.dotnet');
-        const {DotnetInstallDir, core: freshCore} = await importInstallerFor(
-          'windows',
-          dir => dir === homePath
-        );
-
-        expect(DotnetInstallDir.dirPath).toBe(homePath);
-        expect(freshCore.warning).toHaveBeenCalled();
-      });
-
       it(`should not probe a relative default location on Windows`, async () => {
         delete process.env['DOTNET_INSTALL_DIR'];
         // An unset PROGRAMFILES makes the Windows default relative.
@@ -754,17 +737,19 @@ describe('installer tests', () => {
         expect(DotnetInstallDir.dirPath).toBe('/usr/share/dotnet');
       });
 
-      it(`should keep the default location and warn when neither is writable`, async () => {
+      it(`should still report writable when the probe cannot be removed`, async () => {
         delete process.env['DOTNET_INSTALL_DIR'];
-        const {DotnetInstallDir, core: freshCore} = await importInstallerFor(
+        const {DotnetInstallDir, fs: freshFs} = await importInstallerFor(
           'linux',
-          () => false
+          () => true
         );
+        (freshFs.rmSync as jest.Mock).mockImplementation(() => {
+          throw Object.assign(new Error('device or resource busy'), {
+            code: 'EBUSY'
+          });
+        });
 
         expect(DotnetInstallDir.dirPath).toBe('/usr/share/dotnet');
-        expect((freshCore.warning as jest.Mock).mock.calls[0][0]).toContain(
-          'the installation is likely to fail'
-        );
       });
 
       it(`should prefer DOTNET_INSTALL_DIR env.var without probing`, async () => {

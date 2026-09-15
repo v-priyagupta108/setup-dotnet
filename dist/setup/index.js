@@ -45343,6 +45343,7 @@ class DotnetInstallDir {
             return systemPath;
         }
         if (!DotnetInstallDir.isWritableLocation(homePath)) {
+            // Not setFailed: the install may still succeed, so let it report the error.
             warning(`Neither the default .NET install directory '${systemPath}' nor '${homePath}' is writable by the current user. Keeping '${systemPath}', but the installation is likely to fail. Set the DOTNET_INSTALL_DIR environment variable to a writable location.`);
             return systemPath;
         }
