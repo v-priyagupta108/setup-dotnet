@@ -1,5 +1,6 @@
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -61,7 +62,8 @@ jest.unstable_mockModule('../src/utils.js', () => {
   const actual = jest.requireActual(
     '../src/utils.js'
   ) as typeof import('../src/utils.js');
-  return {...actual, PLATFORM: platformOverride ?? actual.PLATFORM};
+  const platform = platformOverride ?? actual.PLATFORM;
+  return {...actual, PLATFORM: platform, IS_WINDOWS: platform === 'windows'};
 });
 
 const exec = await import('@actions/exec');
@@ -585,12 +587,20 @@ describe('installer tests', () => {
         return {DotnetInstallDir, core: freshCore, fs: freshFs, os: freshOs};
       };
 
+      const probedDirs = (freshFs: typeof import('fs')) =>
+        (freshFs.mkdtempSync as jest.Mock).mock.calls.map(call =>
+          path.dirname(String(call[0]))
+        );
+
+      beforeEach(() => {
+        delete process.env['DOTNET_INSTALL_DIR'];
+      });
+
       afterEach(() => {
         platformOverride = undefined;
       });
 
       it(`should use the default location when it is writable`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
         const {DotnetInstallDir} = await importInstallerFor(
           'linux',
           () => true
@@ -600,7 +610,6 @@ describe('installer tests', () => {
       });
 
       it(`should fall back to the home directory when the default location is not writable`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
         const fallbackPath = path.join(os.homedir(), '.dotnet');
         const {DotnetInstallDir, core: freshCore} = await importInstallerFor(
           'linux',
@@ -612,7 +621,6 @@ describe('installer tests', () => {
       });
 
       it(`should reject a dangling symlink instead of probing its writable parent`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
         // Resolved, because that is the form the probe receives on every platform.
         const linkPath = path.resolve('/usr/share/dotnet');
         const {DotnetInstallDir, fs: freshFs} = await importInstallerFor(
@@ -634,15 +642,12 @@ describe('installer tests', () => {
         expect(DotnetInstallDir.dirPath).toBe(
           path.join(os.homedir(), '.dotnet')
         );
-        const probedIn = (freshFs.mkdtempSync as jest.Mock).mock.calls.map(
-          call => path.dirname(String(call[0]))
-        );
-        expect(probedIn).toContain(linkPath);
-        expect(probedIn).not.toContain(path.dirname(linkPath));
+        const probed = probedDirs(freshFs);
+        expect(probed).toContain(linkPath);
+        expect(probed).not.toContain(path.dirname(linkPath));
       });
 
       it(`should probe the nearest existing parent when the directory is missing`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
         const systemPath = path.resolve('/usr/share/dotnet');
         const parentPath = path.dirname(systemPath);
         const {DotnetInstallDir, fs: freshFs} = await importInstallerFor(
@@ -658,15 +663,12 @@ describe('installer tests', () => {
         );
 
         expect(DotnetInstallDir.dirPath).toBe('/usr/share/dotnet');
-        const probedIn = (freshFs.mkdtempSync as jest.Mock).mock.calls.map(
-          call => path.dirname(String(call[0]))
-        );
-        expect(probedIn).toContain(parentPath);
-        expect(probedIn).not.toContain(systemPath);
+        const probed = probedDirs(freshFs);
+        expect(probed).toContain(parentPath);
+        expect(probed).not.toContain(systemPath);
       });
 
       it(`should give up at the filesystem root when no ancestor exists`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
         const systemPath = path.resolve('/usr/share/dotnet');
         const homePath = path.join(os.homedir(), '.dotnet');
         const {DotnetInstallDir, fs: freshFs} = await importInstallerFor(
@@ -682,15 +684,11 @@ describe('installer tests', () => {
         );
 
         expect(DotnetInstallDir.dirPath).toBe(homePath);
-        const probedIn = (freshFs.mkdtempSync as jest.Mock).mock.calls.map(
-          call => path.dirname(String(call[0]))
-        );
         // The walk hit the root and returned without ever probing.
-        expect(probedIn).toEqual([homePath]);
+        expect(probedDirs(freshFs)).toEqual([homePath]);
       });
 
       it(`should not probe a relative default location`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
         // An unset HOME makes the macOS default relative, e.g. 'undefined/.dotnet'.
         delete process.env['HOME'];
         const homePath = path.join(os.homedir(), '.dotnet');
@@ -700,14 +698,10 @@ describe('installer tests', () => {
         );
 
         expect(DotnetInstallDir.dirPath).toBe(homePath);
-        const probedIn = (freshFs.mkdtempSync as jest.Mock).mock.calls.map(
-          call => path.dirname(String(call[0]))
-        );
-        expect(probedIn).not.toContain(process.cwd());
+        expect(probedDirs(freshFs)).not.toContain(process.cwd());
       });
 
       it(`should not probe a relative default location on Windows`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
         // An unset PROGRAMFILES makes the Windows default relative.
         delete process.env['PROGRAMFILES'];
         const homePath = path.join(os.homedir(), '.dotnet');
@@ -717,14 +711,10 @@ describe('installer tests', () => {
         );
 
         expect(DotnetInstallDir.dirPath).toBe(homePath);
-        const probedIn = (freshFs.mkdtempSync as jest.Mock).mock.calls.map(
-          call => path.dirname(String(call[0]))
-        );
-        expect(probedIn).not.toContain(process.cwd());
+        expect(probedDirs(freshFs)).not.toContain(process.cwd());
       });
 
       it(`should not treat the filesystem root as a home directory`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
         const root = path.parse(process.cwd()).root;
         const rootDotnet = path.join(root, '.dotnet');
         // Only the root candidate is writable, so an unguarded run would pick it.
@@ -738,7 +728,6 @@ describe('installer tests', () => {
       });
 
       it(`should still report writable when the probe cannot be removed`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
         const {DotnetInstallDir, fs: freshFs} = await importInstallerFor(
           'linux',
           () => true
@@ -750,6 +739,21 @@ describe('installer tests', () => {
         });
 
         expect(DotnetInstallDir.dirPath).toBe('/usr/share/dotnet');
+      });
+
+      it(`should not probe on macOS, where the default is already the home directory`, async () => {
+        // The mac default derives from HOME, homeInstallPath() from os.homedir();
+        // aligning them is what makes the equality short-circuit apply.
+        process.env['HOME'] = os.homedir();
+        const homePath = path.join(os.homedir(), '.dotnet');
+        // Nothing is writable, so any probe at all would change the result.
+        const {DotnetInstallDir, fs: freshFs} = await importInstallerFor(
+          'mac',
+          () => false
+        );
+
+        expect(DotnetInstallDir.dirPath).toBe(homePath);
+        expect(freshFs.mkdtempSync as jest.Mock).not.toHaveBeenCalled();
       });
 
       it(`should prefer DOTNET_INSTALL_DIR env.var without probing`, async () => {
@@ -764,7 +768,6 @@ describe('installer tests', () => {
       });
 
       it(`should resolve once, and not before the directory is needed`, async () => {
-        delete process.env['DOTNET_INSTALL_DIR'];
         const {DotnetInstallDir, fs: freshFs} = await importInstallerFor(
           'linux',
           () => true
