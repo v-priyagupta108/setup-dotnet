@@ -53,7 +53,9 @@ jest.unstable_mockModule('os', () => {
   const actual = jest.requireActual('os') as typeof import('os');
   // os.homedir() reads the real environment, not jest's process.env.
   const homedir = jest.fn(actual.homedir);
-  return {...actual, homedir, default: {...actual, homedir}};
+  // Resolved per call, so spies placed on the real module still take effect.
+  const arch = () => actual.arch();
+  return {...actual, homedir, arch, default: {...actual, homedir, arch}};
 });
 
 // Allows tests to re-import the installer as if running on another OS.
