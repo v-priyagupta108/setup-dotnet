@@ -720,13 +720,15 @@ describe('installer tests', () => {
         const root = path.parse(process.cwd()).root;
         const rootDotnet = path.join(root, '.dotnet');
         // Only the root candidate is writable, so an unguarded run would pick it.
-        const {DotnetInstallDir, os: freshOs} = await importInstallerFor(
-          'linux',
-          dir => dir === rootDotnet
-        );
+        const {
+          DotnetInstallDir,
+          os: freshOs,
+          core: freshCore
+        } = await importInstallerFor('linux', dir => dir === rootDotnet);
         (freshOs.homedir as jest.Mock).mockReturnValue(root);
 
         expect(DotnetInstallDir.dirPath).toBe('/usr/share/dotnet');
+        expect(freshCore.warning).toHaveBeenCalled();
       });
 
       it(`should still report writable when the probe cannot be removed`, async () => {

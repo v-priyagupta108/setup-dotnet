@@ -358,28 +358,33 @@ export abstract class DotnetInstallDir {
     const systemPath = DotnetInstallDir.default[PLATFORM];
     const homePath = DotnetInstallDir.homeInstallPath();
 
+    // Same location on macOS, so there is nothing to fall back to.
+    if (homePath === systemPath) {
+      return systemPath;
+    }
+
+    // A relative default (unset HOME/PROGRAMFILES) would probe the cwd.
     if (
-      !homePath ||
-      homePath === systemPath ||
-      // A relative default (unset HOME/PROGRAMFILES) would probe the cwd.
-      (path.isAbsolute(systemPath) &&
-        DotnetInstallDir.isWritableLocation(systemPath))
+      path.isAbsolute(systemPath) &&
+      DotnetInstallDir.isWritableLocation(systemPath)
     ) {
       return systemPath;
     }
 
-    if (!DotnetInstallDir.isWritableLocation(homePath)) {
-      // Not setFailed: the install may still succeed, so let it report the error.
+    if (homePath && DotnetInstallDir.isWritableLocation(homePath)) {
       core.warning(
-        `Neither the default .NET install directory '${systemPath}' nor '${homePath}' is writable by the current user. Keeping '${systemPath}', but the installation is likely to fail. Set the DOTNET_INSTALL_DIR environment variable to a writable location.`
+        `The default .NET install directory '${systemPath}' is not writable by the current user. Falling back to '${homePath}'; .NET preinstalled in the default location will no longer be used. Set the DOTNET_INSTALL_DIR environment variable to override this location.`
       );
-      return systemPath;
+      return homePath;
     }
 
+    // Not setFailed: the install may still succeed, so let it report the error.
     core.warning(
-      `The default .NET install directory '${systemPath}' is not writable by the current user. Falling back to '${homePath}'; .NET preinstalled in the default location will no longer be used. Set the DOTNET_INSTALL_DIR environment variable to override this location.`
+      homePath
+        ? `Neither the default .NET install directory '${systemPath}' nor '${homePath}' is writable by the current user. Keeping '${systemPath}', but the installation is likely to fail. Set the DOTNET_INSTALL_DIR environment variable to a writable location.`
+        : `The default .NET install directory '${systemPath}' is not writable by the current user and no usable home directory was found. Keeping '${systemPath}', but the installation is likely to fail. Set the DOTNET_INSTALL_DIR environment variable to a writable location.`
     );
-    return homePath;
+    return systemPath;
   }
 
   private static homeInstallPath(): string | undefined {
